@@ -13,11 +13,12 @@ A Python-based tool for downloading financial market data from various sources.
 - Advanced data validation
 - Market session awareness
 
-## Installation
-[To be added]
+## Requirements
+- Python 3.8+
+- Required packages listed in requirements.txt
 
-## Usage
-[To be added]
+## Project Status
+Currently in initial development.
 
-## Contributing
-[To be added]
+## License
+This project is licensed under the MIT License - see the LICENSE file for details.
