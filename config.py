@@ -29,7 +29,7 @@ INSTRUMENTS = {
         'symbol': 'XAUUSD',
         'point_value': 1000,
         'table_name': 'ticks_xauusd',
-        'start_date': datetime(2025, 1, 1),
+        'start_date': datetime(2003, 5, 5), #year, month, day
         'trading_hours': gold_trading_hours
     }
 }
