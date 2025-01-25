@@ -16,6 +16,13 @@ import argparse
 # Retry mode with date range
 # python main.py --mode retry --start 2024-01-01 --end 2024-01-31
 
+def parse_date(date_str: str) -> date:
+    """Convert string date in YYYY-MM-DD format to date object"""
+    try:
+        return datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"Invalid date format. Please use YYYY-MM-DD. Error: {str(e)}")
+
 class DataOrchestrator:
     def __init__(self):
         self.config = {'DB_CONFIG': DB_CONFIG, 'INSTRUMENTS': INSTRUMENTS}
