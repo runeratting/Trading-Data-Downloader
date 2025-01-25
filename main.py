@@ -69,22 +69,49 @@ class DataOrchestrator:
         start_time = datetime.now()
         total_ticks = 0
         
-        # Create batches of trading hours
+        # Create list of trading hours
         trading_hours = [
             hour for hour in range(24)
             if self.should_download_hour(instrument, day, hour)
         ]
         
-        # Process hours in batches of 16
-        batch_size = 16
+        # Create semaphore to limit concurrent downloads
+        semaphore = asyncio.Semaphore(4)  # Allow 4 concurrent batches
+        batch_size = 4  # 4 downloads per batch
+        
+        async def process_batch(batch_hours):
+            """Process a batch of hours with controlled concurrency"""
+            async with semaphore:
+                tasks = [self.process_hour(instrument, day, hour) for hour in batch_hours]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Handle results and flush after each batch
+                batch_ticks = 0
+                for result in results:
+                    if isinstance(result, Exception):
+                        logging.error(f"Error processing hour for {instrument} on {day}: {str(result)}")
+                        continue
+                    if isinstance(result, int):
+                        batch_ticks += result
+                
+                # Flush the buffer after each batch
+                await self.db.flush_buffer(instrument)
+                return batch_ticks
+        
+        # Create and run all batches
+        batch_tasks = []
         for i in range(0, len(trading_hours), batch_size):
             batch = trading_hours[i:i + batch_size]
-            tasks = [self.process_hour(instrument, day, hour) for hour in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for result in results:
-                if isinstance(result, int):
-                    total_ticks += result
+            batch_tasks.append(process_batch(batch))
+        
+        # Wait for all batches to complete and sum the results
+        batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+        for result in batch_results:
+            if isinstance(result, Exception):
+                logging.error(f"Error processing batch for {instrument} on {day}: {str(result)}")
+                continue
+            if isinstance(result, int):
+                total_ticks += result
         
         elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
         logging.info(f"Processed {total_ticks} ticks for {instrument} on {day} in {elapsed_ms:.0f}ms")

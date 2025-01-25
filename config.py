@@ -15,14 +15,14 @@ def gold_trading_hours(day: int, hour: int) -> bool:
     hour: 0-23
     Returns True if gold is trading at this day/hour
     """
-    if day in [0, 1, 2, 3]:  # Monday through Thursday
-        return (hour < 22) or (hour >= 23)  # Trading 00:00-21:59 AND 23:00-23:59
-    elif day == 4:  # Friday
-        return hour < 22  # Trading 00:00-21:59
+    if day in [0, 1, 2, 3, 4]:  # Monday through Thursday
+        return True #(hour < 22) or (hour >= 23)  # Trading 00:00-21:59 AND 23:00-23:59
+    #elif day == 4:  # Friday
+     #   return True #hour < 22  # Trading 00:00-21:59
     elif day == 5:  # Saturday
         return False  # No trading
     else:  # Sunday
-        return hour >= 23  # Trading starts at 23:00
+        return hour >= 21  # Trading starts at 23:00
 
 INSTRUMENTS = {
     'XAUUSD': {
