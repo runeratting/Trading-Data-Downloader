@@ -8,6 +8,13 @@ from tqdm import tqdm
 from downloader import DukasCopyDownloader
 from db_handler import TickDBHandler
 from config import DB_CONFIG, INSTRUMENTS
+import argparse
+
+# Normal mode (default)
+# python main.py
+
+# Retry mode with date range
+# python main.py --mode retry --start 2024-01-01 --end 2024-01-31
 
 class DataOrchestrator:
     def __init__(self):
@@ -64,16 +71,26 @@ class DataOrchestrator:
             logging.error(f"Failed to process {instrument} for {day} hour {hour}: {str(e)}")
             raise
 
-    async def process_day(self, instrument: str, day: date) -> Tuple[int, float]:
+    async def process_day(self, instrument: str, day: date, mode: str = 'normal') -> Tuple[int, float]:
         """Process a full day of data with controlled concurrency"""
         start_time = datetime.now()
         total_ticks = 0
         
-        # Create list of trading hours
-        trading_hours = [
-            hour for hour in range(24)
-            if self.should_download_hour(instrument, day, hour)
-        ]
+        # Get hours to process based on mode
+        if mode == 'retry':
+            trading_hours = await self.db.find_missing_hours(
+                instrument, 
+                day, 
+                self.config['INSTRUMENTS'][instrument]['trading_hours']
+            )
+        else:
+            trading_hours = [
+                hour for hour in range(24)
+                if self.should_download_hour(instrument, day, hour)
+            ]
+        
+        if not trading_hours:
+            return 0, 0
         
         # Create semaphore to limit concurrent downloads
         semaphore = asyncio.Semaphore(4)  # Allow 4 concurrent batches
@@ -117,7 +134,7 @@ class DataOrchestrator:
         logging.info(f"Processed {total_ticks} ticks for {instrument} on {day} in {elapsed_ms:.0f}ms")
         return total_ticks, elapsed_ms
 
-    async def run(self):
+    async def run(self, mode: str = 'normal', start_date: Optional[date] = None, end_date: Optional[date] = None):
         """Main execution method"""
         for instrument in self.config['INSTRUMENTS']:
             self.stats[instrument] = {
@@ -129,7 +146,17 @@ class DataOrchestrator:
             
             logging.info(f"\nProcessing instrument: {instrument}")
             
-            dates = await self.get_dates_to_download(instrument)
+            if mode == 'normal':
+                dates = await self.get_dates_to_download(instrument)
+            else:
+                # For retry mode, use specified date range
+                if start_date is None or end_date is None:
+                    raise ValueError("start_date and end_date are required for retry mode")
+                dates = [
+                    start_date + timedelta(days=x)
+                    for x in range((end_date - start_date).days + 1)
+                ]
+                
             if not dates:
                 logging.info(f"No dates to process for {instrument}")
                 continue
@@ -141,7 +168,7 @@ class DataOrchestrator:
             
             # Process each day
             for day in dates:
-                ticks, elapsed_ms = await self.process_day(instrument, day)
+                ticks, elapsed_ms = await self.process_day(instrument, day, mode)
                 self.stats[instrument]['total_ticks'] += ticks
                 self.stats[instrument]['days_processed'] += 1
                 self.stats[instrument]['total_time_ms'] += elapsed_ms
@@ -151,9 +178,6 @@ class DataOrchestrator:
                 )
             
             pbar.close()
-            
-            # Ensure all data is written
-            await self.db.flush_buffer(instrument)
             
             # Print statistics
             self.print_instrument_stats(instrument)
@@ -172,6 +196,20 @@ class DataOrchestrator:
         print("="*50 + "\n")
 
 async def main():
+    parser = argparse.ArgumentParser(description='DukasCopy Data Downloader')
+    parser.add_argument('--mode', choices=['normal', 'retry'], default='normal',
+                      help='Operation mode: normal (default) or retry')
+    parser.add_argument('--start', type=parse_date,
+                      help='Start date (YYYY-MM-DD). Required for retry mode')
+    parser.add_argument('--end', type=parse_date,
+                      help='End date (YYYY-MM-DD). Required for retry mode')
+    
+    args = parser.parse_args()
+    
+    # Validate arguments
+    if args.mode == 'retry' and (args.start is None or args.end is None):
+        parser.error("--start and --end dates are required for retry mode")
+    
     # Create logs directory if it doesn't exist
     Path('logs').mkdir(exist_ok=True)
     
@@ -188,7 +226,11 @@ async def main():
     try:
         print("\nStarting data download...")
         orchestrator = DataOrchestrator()
-        await orchestrator.run()
+        await orchestrator.run(
+            mode=args.mode,
+            start_date=args.start,
+            end_date=args.end
+        )
         print("\nDownload completed!")
     except Exception as e:
         logging.error(f"Main execution failed: {str(e)}")

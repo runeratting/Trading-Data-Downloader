@@ -1,7 +1,7 @@
 # db_handler.py
 import psycopg2
-from datetime import datetime, timezone
-from typing import List, Tuple, Dict
+from datetime import datetime, timezone, date
+from typing import List, Tuple, Dict, Optional
 import logging
 from pathlib import Path
 from io import StringIO
@@ -136,3 +136,32 @@ class TickDBHandler:
                 logging.error(f"Error during rollback: {str(rollback_error)}")
             self._connection = None  # Force new connection on next attempt
             raise
+
+    async def get_hour_tick_counts(self, instrument: str, day: date) -> Dict[int, int]:
+        """
+        Returns a dictionary of {hour: tick_count} for the given instrument and day
+        """
+        query = """
+            SELECT EXTRACT(HOUR FROM timestamp) as hour, COUNT(*) as tick_count
+            FROM ticks
+            WHERE instrument = $1
+            AND DATE(timestamp) = $2
+            GROUP BY EXTRACT(HOUR FROM timestamp)
+        """
+        results = await self.pool.fetch(query, instrument, day)
+        return {int(r['hour']): r['tick_count'] for r in results}
+
+    async def find_missing_hours(self, instrument: str, day: date, trading_hours_func) -> list[int]:
+        """Returns a list of hours that have no data in the database for given instrument and day"""
+        # Get count of ticks for each hour of the day
+        hour_counts = await self.get_hour_tick_counts(instrument, day)
+        
+        # Check which hours during trading time have no data
+        missing_hours = []
+        for hour in range(24):
+            if not trading_hours_func(day.weekday(), hour):
+                continue
+            if hour not in hour_counts or hour_counts[hour] == 0:
+                missing_hours.append(hour)
+        
+        return missing_hours
