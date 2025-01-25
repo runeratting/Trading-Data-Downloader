@@ -5,11 +5,14 @@ from typing import List, Tuple, Dict, Optional
 import logging
 from pathlib import Path
 from io import StringIO
+import asyncpg
+import asyncio
 
 class TickDBHandler:
     def __init__(self, config: dict):
         self.config = config
         self._connection = None
+        self.pool = None
         
         # Buffer setup
         self.buffers: Dict[str, List[Tuple]] = {}  # Separate buffer for each instrument
@@ -34,6 +37,17 @@ class TickDBHandler:
                 logging.error(f"Failed to create database connection: {str(e)}")
                 raise
         return self._connection
+
+    async def connect(self):
+        """Initialize database connection pool"""
+        if self.pool is None:
+            self.pool = await asyncpg.create_pool(
+                host=self.config['DB_CONFIG']['host'],
+                port=self.config['DB_CONFIG']['port'],
+                user=self.config['DB_CONFIG']['user'],
+                password=self.config['DB_CONFIG']['password'],
+                database=self.config['DB_CONFIG']['database']
+            )
 
     def close(self):
         """Flush buffers and close connection"""
@@ -141,6 +155,7 @@ class TickDBHandler:
         """
         Returns a dictionary of {hour: tick_count} for the given instrument and day
         """
+        await self.connect()  # Ensure we have a connection
         query = """
             SELECT EXTRACT(HOUR FROM timestamp) as hour, COUNT(*) as tick_count
             FROM ticks
@@ -151,7 +166,7 @@ class TickDBHandler:
         results = await self.pool.fetch(query, instrument, day)
         return {int(r['hour']): r['tick_count'] for r in results}
 
-    async def find_missing_hours(self, instrument: str, day: date, trading_hours_func) -> list[int]:
+    async def find_missing_hours(self, instrument: str, day: date, trading_hours_func) -> List[int]:
         """Returns a list of hours that have no data in the database for given instrument and day"""
         # Get count of ticks for each hour of the day
         hour_counts = await self.get_hour_tick_counts(instrument, day)
