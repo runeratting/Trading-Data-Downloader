@@ -37,27 +37,32 @@ class DataOrchestrator:
         self.stats: Dict[str, Dict] = {}
 
     async def get_dates_to_download(self, instrument: str) -> List[date]:
-        """Calculate which dates need to be downloaded"""
+        """Get list of dates to download based on latest data and config"""
+        # Get latest timestamp from DB
         latest_timestamp = await self.db.get_latest_timestamp(instrument)
-        instrument_config = self.config['INSTRUMENTS'][instrument]
         
-        logging.info(f"Start date from config: {instrument_config['start_date']}")
         if latest_timestamp:
-            logging.info(f"Latest timestamp from DB: {latest_timestamp}")
             start_date = latest_timestamp.date() + timedelta(days=1)
+            logging.info(f"{instrument}: Found existing data, continuing from {start_date} (day after latest data)")
         else:
-            start_date = instrument_config['start_date'].date()
-            
-        end_date = datetime.now(timezone.utc).date() - timedelta(days=1)
+            start_date = self.config['INSTRUMENTS'][instrument]['start_date']
+            logging.info(f"{instrument}: No existing data found, starting from configured date: {start_date}")
         
-        logging.info(f"Will download from {start_date} to {end_date}")
+        # Get end date as yesterday
+        end_date = datetime.now().date() - timedelta(days=1)
+        logging.info(f"{instrument}: Setting end date to yesterday: {end_date}")
         
-        return [
-            current_date for current_date in (
-                start_date + timedelta(days=x) 
-                for x in range((end_date - start_date).days + 1)
-            )
+        date_range = [
+            start_date + timedelta(days=x)
+            for x in range((end_date - start_date).days + 1)
         ]
+        
+        if date_range:
+            logging.info(f"{instrument}: Will download {len(date_range)} days from {date_range[0]} to {date_range[-1]}")
+        else:
+            logging.info(f"{instrument}: No dates to download (start date {start_date} is after end date {end_date})")
+        
+        return date_range
 
     def should_download_hour(self, instrument: str, day: date, hour: int) -> bool:
         """Check if this hour should be downloaded based on trading hours"""
@@ -151,6 +156,29 @@ class DataOrchestrator:
 
     async def run(self, mode: str = 'normal', start_date: Optional[date] = None, end_date: Optional[date] = None):
         """Main execution method"""
+        # Create semaphore to limit total concurrent downloads
+        semaphore = asyncio.Semaphore(4)  # Allow 4 concurrent batches
+        batch_size = 4  # 4 downloads per batch
+        
+        async def process_hour_batch(instrument: str, day: date, hours: List[int]):
+            """Process a batch of hours with controlled concurrency"""
+            async with semaphore:
+                tasks = [self.process_hour(instrument, day, hour) for hour in hours]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Handle results
+                batch_ticks = 0
+                for result in results:
+                    if isinstance(result, Exception):
+                        logging.error(f"Error processing hour for {instrument} on {day}: {str(result)}")
+                        continue
+                    if isinstance(result, int):
+                        batch_ticks += result
+                
+                # Flush the buffer after each batch
+                await self.db.flush_buffer(instrument)
+                return batch_ticks, day
+        
         for instrument in self.config['INSTRUMENTS']:
             self.stats[instrument] = {
                 'total_ticks': 0,
@@ -165,14 +193,12 @@ class DataOrchestrator:
             if mode == 'normal':
                 dates = await self.get_dates_to_download(instrument)
             else:
-                # For retry mode, get missing hours in batches
                 if start_date is None or end_date is None:
                     raise ValueError("start_date and end_date are required for retry mode")
                 
                 missing_hours = await self.db.get_missing_hours_batch(instrument, start_date, end_date)
                 dates = list(missing_hours.keys())
                 
-                # Count total missing hours for statistics
                 total_missing = sum(len(hours) for hours in missing_hours.values())
                 if total_missing == 0:
                     logging.info(f"No missing data found for {instrument}")
@@ -180,49 +206,64 @@ class DataOrchestrator:
                 
                 logging.info(f"Found {len(dates)} days with {total_missing} missing hours for {instrument}")
                 self.stats[instrument]['missing_hours'] = total_missing
-                
+            
             if not dates:
                 logging.info(f"No dates to process for {instrument}")
                 continue
             
             # Setup progress bar
-            pbar = tqdm(total=len(dates))
+            pbar = tqdm(total=total_missing if mode == 'retry' else len(dates))
             pbar.set_description(
                 f"Processing {instrument} - Found {self.stats[instrument].get('missing_hours', 0)} missing hours"
             )
             
-            # Process each day
+            # Create all hour batches across all days
+            all_batches = []
             for day in dates:
                 if mode == 'retry':
-                    # Use pre-fetched missing hours
-                    day_hours = missing_hours[day]
+                    hours = missing_hours[day]
                 else:
-                    day_hours = None  # Will be determined in process_day
+                    hours = [h for h in range(24) if self.should_download_hour(instrument, day, h)]
                 
-                ticks, elapsed_ms = await self.process_day(
-                    instrument, 
-                    day, 
-                    mode=mode, 
-                    trading_hours=day_hours
-                )
+                # Split hours into batches
+                for i in range(0, len(hours), batch_size):
+                    batch_hours = hours[i:i + batch_size]
+                    all_batches.append((day, batch_hours))
+            
+            # Process batches with controlled concurrency
+            batch_tasks = []
+            for i in range(0, len(all_batches), 4):  # Process 4 batches at a time
+                current_batches = all_batches[i:i + 4]
+                tasks = [
+                    process_hour_batch(instrument, day, hours)
+                    for day, hours in current_batches
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
                 
-                if ticks > 0:
-                    self.stats[instrument]['total_ticks'] += ticks
-                    self.stats[instrument]['days_processed'] += 1
-                    self.stats[instrument]['total_time_ms'] += elapsed_ms
-                
-                pbar.update(1)
-                if mode == 'retry':
-                    pbar.set_description(
-                        f"Processing {instrument} - "
-                        f"Day {self.stats[instrument]['days_processed']}/{len(dates)} - "
-                        f"Downloaded {self.stats[instrument]['total_ticks']} ticks"
-                    )
-                else:
-                    pbar.set_description(
-                        f"Processing {instrument} - "
-                        f"Day {self.stats[instrument]['days_processed']}/{len(dates)}"
-                    )
+                # Handle results
+                for result in results:
+                    if isinstance(result, Exception):
+                        logging.error(f"Error processing batch: {str(result)}")
+                        continue
+                    if isinstance(result, tuple):
+                        ticks, day = result
+                        if ticks > 0:
+                            self.stats[instrument]['total_ticks'] += ticks
+                            if day not in self.stats[instrument].get('processed_days', set()):
+                                self.stats[instrument]['days_processed'] += 1
+                                self.stats[instrument].setdefault('processed_days', set()).add(day)
+                        
+                        pbar.update(batch_size)
+                        if mode == 'retry':
+                            pbar.set_description(
+                                f"Processing {instrument} - "
+                                f"Downloaded {self.stats[instrument]['total_ticks']} ticks"
+                            )
+                        else:
+                            pbar.set_description(
+                                f"Processing {instrument} - "
+                                f"Day {self.stats[instrument]['days_processed']}/{len(dates)}"
+                            )
             
             pbar.close()
             
