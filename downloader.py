@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor
 class DukasCopyDownloader:
     URL = "https://datafeed.dukascopy.com/datafeed/{currency}/{year}/{month:02d}/{day:02d}/{hour:02d}h_ticks.bi5"
     TICK_SIZE = 20
-    MAX_RETRIES = 5
+    MAX_RETRIES = 3
     INITIAL_RETRY_DELAY = 2
 
     def __init__(self, config):
