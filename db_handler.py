@@ -156,14 +156,18 @@ class TickDBHandler:
         Returns a dictionary of {hour: tick_count} for the given instrument and day
         """
         await self.connect()  # Ensure we have a connection
+        
+        # Get the correct table name for this instrument
+        table_name = self.config['INSTRUMENTS'][instrument]['table_name']
+        
         query = """
             SELECT EXTRACT(HOUR FROM timestamp) as hour, COUNT(*) as tick_count
-            FROM ticks
-            WHERE instrument = $1
-            AND DATE(timestamp) = $2
+            FROM {}
+            WHERE DATE(timestamp) = $1
             GROUP BY EXTRACT(HOUR FROM timestamp)
-        """
-        results = await self.pool.fetch(query, instrument, day)
+        """.format(table_name)
+        
+        results = await self.pool.fetch(query, day)
         return {int(r['hour']): r['tick_count'] for r in results}
 
     async def find_missing_hours(self, instrument: str, day: date, trading_hours_func) -> List[int]:
