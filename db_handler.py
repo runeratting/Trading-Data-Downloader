@@ -1,6 +1,6 @@
 # db_handler.py
 import psycopg2
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from typing import List, Tuple, Dict, Optional
 import logging
 from pathlib import Path
@@ -170,17 +170,61 @@ class TickDBHandler:
         results = await self.pool.fetch(query, day)
         return {int(r['hour']): r['tick_count'] for r in results}
 
-    async def find_missing_hours(self, instrument: str, day: date, trading_hours_func) -> List[int]:
-        """Returns a list of hours that have no data in the database for given instrument and day"""
-        # Get count of ticks for each hour of the day
-        hour_counts = await self.get_hour_tick_counts(instrument, day)
+    async def get_missing_hours_batch(self, instrument: str, start_date: date, end_date: date) -> Dict[date, List[int]]:
+        """
+        Returns a dictionary of {date: [missing_hours]} for the given date range
+        Much more efficient than checking one day at a time
+        """
+        await self.connect()
         
-        # Check which hours during trading time have no data
-        missing_hours = []
-        for hour in range(24):
-            if not trading_hours_func(day.weekday(), hour):
-                continue
-            if hour not in hour_counts or hour_counts[hour] == 0:
-                missing_hours.append(hour)
+        table_name = self.config['INSTRUMENTS'][instrument]['table_name']
+        trading_hours_func = self.config['INSTRUMENTS'][instrument]['trading_hours']
+        
+        # First, get all hours that have data
+        query = """
+            SELECT 
+                DATE(timestamp) as day,
+                EXTRACT(HOUR FROM timestamp) as hour,
+                COUNT(*) as tick_count
+            FROM {}
+            WHERE DATE(timestamp) BETWEEN $1 AND $2
+            GROUP BY DATE(timestamp), EXTRACT(HOUR FROM timestamp)
+        """.format(table_name)
+        
+        results = await self.pool.fetch(query, start_date, end_date)
+        
+        # Convert results to {date: {hour: count}} format
+        existing_data = {}
+        for r in results:
+            day = r['day']
+            hour = int(r['hour'])
+            if day not in existing_data:
+                existing_data[day] = {}
+            existing_data[day][hour] = r['tick_count']
+        
+        # Find missing hours for each day
+        missing_hours = {}
+        current_date = start_date
+        while current_date <= end_date:
+            day_missing = []
+            for hour in range(24):
+                if not trading_hours_func(current_date.weekday(), hour):
+                    continue
+                
+                # Check if hour is missing or has zero ticks
+                if (current_date not in existing_data or 
+                    hour not in existing_data[current_date] or 
+                    existing_data[current_date][hour] == 0):
+                    day_missing.append(hour)
+            
+            if day_missing:  # Only include days that have missing hours
+                missing_hours[current_date] = day_missing
+            
+            current_date += timedelta(days=1)
         
         return missing_hours
+
+    async def find_missing_hours(self, instrument: str, day: date, trading_hours_func) -> List[int]:
+        """Legacy method for compatibility"""
+        missing_dict = await self.get_missing_hours_batch(instrument, day, day)
+        return missing_dict.get(day, [])

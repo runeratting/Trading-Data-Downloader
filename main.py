@@ -16,6 +16,12 @@ import argparse
 # Retry mode with date range
 # python main.py --mode retry --start 2024-01-01 --end 2024-01-31
 
+# Both mode with date range
+# python main.py --mode both --start 2024-01-01 --end 2024-01-31
+
+# Use config dates but only retry
+# python main.py --mode retry
+
 def parse_date(date_str: str) -> date:
     """Convert string date in YYYY-MM-DD format to date object"""
     try:
@@ -78,23 +84,24 @@ class DataOrchestrator:
             logging.error(f"Failed to process {instrument} for {day} hour {hour}: {str(e)}")
             raise
 
-    async def process_day(self, instrument: str, day: date, mode: str = 'normal') -> Tuple[int, float]:
+    async def process_day(self, instrument: str, day: date, mode: str = 'normal', trading_hours: Optional[List[int]] = None) -> Tuple[int, float]:
         """Process a full day of data with controlled concurrency"""
         start_time = datetime.now()
         total_ticks = 0
         
-        # Get hours to process based on mode
-        if mode == 'retry':
-            trading_hours = await self.db.find_missing_hours(
-                instrument, 
-                day, 
-                self.config['INSTRUMENTS'][instrument]['trading_hours']
-            )
-        else:
-            trading_hours = [
-                hour for hour in range(24)
-                if self.should_download_hour(instrument, day, hour)
-            ]
+        # Use provided trading hours or determine them based on mode
+        if trading_hours is None:
+            if mode == 'retry':
+                trading_hours = await self.db.find_missing_hours(
+                    instrument, 
+                    day, 
+                    self.config['INSTRUMENTS'][instrument]['trading_hours']
+                )
+            else:
+                trading_hours = [
+                    hour for hour in range(24)
+                    if self.should_download_hour(instrument, day, hour)
+                ]
         
         if not trading_hours:
             return 0, 0
@@ -138,7 +145,8 @@ class DataOrchestrator:
                 total_ticks += result
         
         elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
-        logging.info(f"Processed {total_ticks} ticks for {instrument} on {day} in {elapsed_ms:.0f}ms")
+        if total_ticks > 0:
+            logging.info(f"Processed {total_ticks} ticks for {instrument} on {day} in {elapsed_ms:.0f}ms")
         return total_ticks, elapsed_ms
 
     async def run(self, mode: str = 'normal', start_date: Optional[date] = None, end_date: Optional[date] = None):
@@ -148,7 +156,8 @@ class DataOrchestrator:
                 'total_ticks': 0,
                 'days_processed': 0,
                 'hours_processed': 0,
-                'total_time_ms': 0
+                'total_time_ms': 0,
+                'missing_hours': 0
             }
             
             logging.info(f"\nProcessing instrument: {instrument}")
@@ -156,33 +165,64 @@ class DataOrchestrator:
             if mode == 'normal':
                 dates = await self.get_dates_to_download(instrument)
             else:
-                # For retry mode, use specified date range
+                # For retry mode, get missing hours in batches
                 if start_date is None or end_date is None:
                     raise ValueError("start_date and end_date are required for retry mode")
-                dates = [
-                    start_date + timedelta(days=x)
-                    for x in range((end_date - start_date).days + 1)
-                ]
+                
+                missing_hours = await self.db.get_missing_hours_batch(instrument, start_date, end_date)
+                dates = list(missing_hours.keys())
+                
+                # Count total missing hours for statistics
+                total_missing = sum(len(hours) for hours in missing_hours.values())
+                if total_missing == 0:
+                    logging.info(f"No missing data found for {instrument}")
+                    continue
+                
+                logging.info(f"Found {len(dates)} days with {total_missing} missing hours for {instrument}")
+                self.stats[instrument]['missing_hours'] = total_missing
                 
             if not dates:
                 logging.info(f"No dates to process for {instrument}")
                 continue
-                
-            logging.info(f"Found {len(dates)} days to process for {instrument}")
             
             # Setup progress bar
-            pbar = tqdm(total=len(dates), desc=f"Processing {instrument}")
+            pbar = tqdm(total=len(dates))
+            pbar.set_description(
+                f"Processing {instrument} - Found {self.stats[instrument].get('missing_hours', 0)} missing hours"
+            )
             
             # Process each day
             for day in dates:
-                ticks, elapsed_ms = await self.process_day(instrument, day, mode)
-                self.stats[instrument]['total_ticks'] += ticks
-                self.stats[instrument]['days_processed'] += 1
-                self.stats[instrument]['total_time_ms'] += elapsed_ms
-                pbar.update(1)
-                pbar.set_description(
-                    f"Processing {instrument} - Day {self.stats[instrument]['days_processed']}/{len(dates)}"
+                if mode == 'retry':
+                    # Use pre-fetched missing hours
+                    day_hours = missing_hours[day]
+                else:
+                    day_hours = None  # Will be determined in process_day
+                
+                ticks, elapsed_ms = await self.process_day(
+                    instrument, 
+                    day, 
+                    mode=mode, 
+                    trading_hours=day_hours
                 )
+                
+                if ticks > 0:
+                    self.stats[instrument]['total_ticks'] += ticks
+                    self.stats[instrument]['days_processed'] += 1
+                    self.stats[instrument]['total_time_ms'] += elapsed_ms
+                
+                pbar.update(1)
+                if mode == 'retry':
+                    pbar.set_description(
+                        f"Processing {instrument} - "
+                        f"Day {self.stats[instrument]['days_processed']}/{len(dates)} - "
+                        f"Downloaded {self.stats[instrument]['total_ticks']} ticks"
+                    )
+                else:
+                    pbar.set_description(
+                        f"Processing {instrument} - "
+                        f"Day {self.stats[instrument]['days_processed']}/{len(dates)}"
+                    )
             
             pbar.close()
             
@@ -204,12 +244,12 @@ class DataOrchestrator:
 
 async def main():
     parser = argparse.ArgumentParser(description='DukasCopy Data Downloader')
-    parser.add_argument('--mode', choices=['normal', 'retry'], default='normal',
-                      help='Operation mode: normal (default) or retry')
+    parser.add_argument('--mode', choices=['normal', 'retry', 'both'], default='normal',
+                      help='Operation mode: normal (default), retry, or both')
     parser.add_argument('--start', type=parse_date,
-                      help='Start date (YYYY-MM-DD). Required for retry mode')
+                      help='Start date (YYYY-MM-DD). Defaults to config value')
     parser.add_argument('--end', type=parse_date,
-                      help='End date (YYYY-MM-DD). Required for retry mode')
+                      help='End date (YYYY-MM-DD). Defaults to config value')
     
     args = parser.parse_args()
     
