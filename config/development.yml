@@ -1,0 +1,54 @@
+# Development environment configuration overrides
+
+database:
+  host: designerMuuh  # Override with env var DB_HOST if needed
+  name: forex_ai  # Override with env var DB_NAME if needed
+
+downloader:
+  max_concurrent_downloads: 2  # Reduced for development
+  batch_size: 2  # Smaller batches for easier debugging
+  cache_days: 5  # Smaller cache for development
+
+buffer:
+  buffer_size: 10000  # Smaller buffer for development
+  flush_interval: 30.0  # More frequent flushes for development
+
+logging:
+  level: DEBUG  # More verbose logging in development
+  file_handlers:
+    main:
+      level: DEBUG
+    data_issues:
+      level: DEBUG
+    performance:
+      level: DEBUG
+    validation:
+      level: DEBUG
+    debug:  # Additional debug log for development
+      filename: debug.log
+      level: DEBUG
+
+validation:
+  max_price_spread_percent: 20.0  # More lenient spread validation for development
+  max_volume: 2000000  # Higher volume limit for testing
+  min_tick_interval: 0.0001  # More precise timing for development
+  max_tick_interval: 300.0  # Longer gaps allowed for testing
+  log_invalid_ticks: true
+  reject_invalid_ticks: false  # Don't reject invalid ticks in development for analysis
+
+checkpoint:
+  enabled: true
+  directory: checkpoints_dev  # Separate directory for development
+  cleanup_days: 7  # More frequent cleanup in development
+  auto_resume: true
+  save_interval: 1  # Save more frequently in development
+
+monitoring:
+  enabled: true
+  metrics_dir: metrics_dev  # Separate metrics directory for development
+  collection_interval: 30  # More frequent collection in development
+  alert_thresholds:  # More lenient thresholds for development
+    memory_percent: 95.0
+    cpu_percent: 95.0
+    disk_percent: 95.0
+  retention_days: 7  # Keep metrics for shorter time in development

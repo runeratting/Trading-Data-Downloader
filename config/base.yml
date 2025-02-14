@@ -1,0 +1,72 @@
+# Base configuration for Trading Data Downloader
+
+database:
+  host: designerMuuh
+  name: forex_ai
+  user: postgres
+  password: posTine4365#
+  port: 5432
+
+instruments:
+  XAUUSD:
+    symbol: XAUUSD
+    point_value: 1000
+    table_name: ticks_xauusd
+    start_date: '2003-05-05'
+    trading_hours: config.gold_trading_hours
+
+downloader:
+  max_retries: 3
+  initial_retry_delay: 2.0
+  max_concurrent_downloads: 4
+  batch_size: 4
+  cache_days: 10
+  user_agent: 'Python Trading Data Downloader'
+
+buffer:
+  buffer_size: 100000
+  max_batch_size: 1000
+  flush_interval: 60.0
+
+logging:
+  level: INFO
+  format: '%(asctime)s - %(levelname)s - %(message)s'
+  log_dir: logs
+  file_handlers:
+    main:
+      filename: downloader.log
+      level: INFO
+    data_issues:
+      filename: data_issues.log
+      level: ERROR
+    performance:
+      filename: performance.log
+      level: INFO
+    validation:
+      filename: validation.log
+      level: INFO
+
+validation:
+  max_price_spread_percent: 10.0  # Maximum allowed spread as percentage
+  max_volume: 1000000  # Maximum allowed volume
+  min_tick_interval: 0.001  # Minimum time between ticks in seconds
+  max_tick_interval: 60.0  # Maximum time between ticks in seconds
+  log_invalid_ticks: true  # Whether to log invalid ticks
+  reject_invalid_ticks: true  # Whether to reject invalid ticks
+
+checkpoint:
+  enabled: true  # Enable checkpoint system
+  directory: checkpoints  # Directory to store checkpoint files
+  cleanup_days: 30  # Remove checkpoint files older than this
+  auto_resume: true  # Automatically resume from checkpoints
+  save_interval: 1  # Save checkpoint every N hours
+
+monitoring:
+  enabled: true  # Enable monitoring system
+  metrics_dir: metrics  # Directory to store metrics files
+  collection_interval: 60  # Collect metrics every N seconds
+  alert_thresholds:  # Thresholds for system alerts
+    memory_percent: 90.0  # Alert when memory usage exceeds 90%
+    cpu_percent: 90.0  # Alert when CPU usage exceeds 90%
+    disk_percent: 90.0  # Alert when disk usage exceeds 90%
+  retention_days: 30  # Keep metrics files for 30 days
