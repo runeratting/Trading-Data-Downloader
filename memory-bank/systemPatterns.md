@@ -55,6 +55,8 @@ graph TD
 - Tracks validation stats
 - Manages thresholds
 - Reports data issues
+- Enforces market rules (bid/ask relationships)
+- Handles timestamp validation
 
 #### System Monitor (monitoring.py)
 - Tracks performance metrics
@@ -92,6 +94,20 @@ graph TD
 - Validation rule builder
 - Query builder
 
+### Validation Patterns
+- Bid/Ask Price Validation
+  - Bid must be higher than ask price (market maker's spread)
+  - Spread calculated as bid-ask difference
+  - Excessive spread detection based on percentage
+  - Negative price prevention
+
+- Timestamp Validation
+  - Base timestamp from hour start
+  - Millisecond precision handling
+  - Future timestamp prevention
+  - Backwards/duplicate detection
+  - Gap analysis for data quality
+
 ## Key Technical Decisions
 
 ### Asynchronous Processing
@@ -117,6 +133,12 @@ graph TD
 - Environment-specific settings
 - Validation of all settings
 - Dynamic configuration
+
+### Market Data Handling
+- Correct bid/ask relationship enforcement
+- Precise timestamp management
+- Data quality validation rules
+- Market-specific validations
 
 ## Performance Patterns
 
@@ -163,3 +185,9 @@ graph TD
 - Memory profiling
 - Concurrency testing
 - Resource monitoring
+
+### Validation Testing
+- Price relationship verification
+- Timestamp accuracy checks
+- Data quality assertions
+- Market rule compliance

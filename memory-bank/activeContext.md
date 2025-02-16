@@ -1,7 +1,7 @@
 # Trading Data Downloader Active Context
 
 ## Current Focus
-We are currently debugging test_downloader, which is part of our testing infrastructure for validating the download functionality.
+We have resolved the test_downloader debugging issues, fixing critical validation and timestamp handling problems. The testing infrastructure is now correctly validating download functionality with proper bid/ask price validation and accurate timestamp handling.
 
 ## Recent Major Changes
 
@@ -25,6 +25,9 @@ We are currently debugging test_downloader, which is part of our testing infrast
 - Implemented validation statistics
 - Added environment-specific validation settings
 - Integrated validation with downloader
+- Fixed bid/ask price validation (bid must be higher than ask)
+- Corrected spread calculation to use bid-ask difference
+- Improved timestamp validation and handling
 
 ### 4. Performance Optimization
 - Implemented numpy-based tick processing
@@ -76,24 +79,21 @@ We are currently debugging test_downloader, which is part of our testing infrast
 ## Current Challenges
 
 ### Technical Challenges
-1. Debugging test_downloader functionality
-2. Optimizing memory usage in data processing
-3. Improving error recovery mechanisms
-4. Enhancing performance monitoring
+1. Optimizing memory usage in data processing
+2. Improving error recovery mechanisms
+3. Enhancing performance monitoring
 
 ### Development Priorities
-1. Complete test_downloader debugging
-2. Implement remaining validation features
-3. Optimize performance bottlenecks
-4. Enhance monitoring capabilities
+1. Optimize performance bottlenecks
+2. Enhance monitoring capabilities
+3. Expand validation test coverage
 
 ## Next Steps
 
 ### Immediate Tasks
-1. Debug and fix test_downloader issues
-2. Complete validation system implementation
-3. Optimize performance critical paths
-4. Enhance error handling
+1. Complete validation system implementation
+2. Optimize performance critical paths
+3. Enhance error handling
 
 ### Short-term Goals
 1. Finalize testing infrastructure
@@ -109,6 +109,12 @@ We are currently debugging test_downloader, which is part of our testing infrast
 
 ## Recent Learnings
 
+### Data Validation Insights
+- Bid price must be higher than ask price in forex/metals trading
+- Spread calculation should use bid-ask difference
+- Timestamp handling requires careful consideration of base times vs offsets
+- Validation rules must reflect real-world market behavior
+
 ### Performance Insights
 - Batch processing significantly improves throughput
 - Memory management is critical for stability
@@ -120,9 +126,11 @@ We are currently debugging test_downloader, which is part of our testing infrast
 - Centralized configuration reduces errors
 - Comprehensive monitoring is crucial
 - Error handling needs careful design
+- Validation rules should be documented clearly
 
 ### System Behavior
 - Resource usage patterns identified
 - Performance bottlenecks documented
 - Error patterns analyzed
 - Recovery mechanisms evaluated
+- Validation statistics provide valuable insights
